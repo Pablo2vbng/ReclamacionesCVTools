@@ -67,6 +67,7 @@ form.addEventListener('submit', async (event) => {
         confirmationContainer.style.display = 'block';
 
     } catch (error) {
+        console.error("Error detallado:", error); // Añadido para mejor depuración
         alert(error.message || 'Hubo un problema al generar el PDF.');
         // Volver a la vista del formulario si hay un error
         loadingContainer.style.display = 'none';
@@ -87,31 +88,53 @@ viewPdfButton.addEventListener('click', () => {
 
 // --- FUNCIONES AUXILIARES ---
 
+/**
+ * Función CORREGIDA Y ROBUSTA para obtener imágenes y evitar el error "cannot read properties of null".
+ * Solo busca los IDs definidos en 'fileInputIds' y maneja correctamente si un elemento no existe o no tiene archivo.
+ */
 function getImagesAsBase64() {
-    const fileInputs = [
-        document.getElementById('fotoDelantera'), 
-        document.getElementById('fotoTrasera')
-    ];
+    const fileInputIds = ['fotoDelantera', 'fotoTrasera']; // IDs de los campos de imagen en el HTML
+    
+    const filePromises = fileInputIds.map((id, index) => {
+        const inputElement = document.getElementById(id);
 
-    const filePromises = fileInputs.map(input => {
+        // ---- INICIO DE LA CORRECCIÓN CLAVE ----
+        // 1. Comprobamos si el elemento HTML realmente existe antes de intentar usarlo.
+        if (!inputElement) {
+            console.warn(`El campo de imagen con ID "${id}" no se encontró en el HTML. Será omitido.`);
+            // Devolvemos una promesa que se resuelve a 'null' para no romper la cadena.
+            return Promise.resolve(null);
+        }
+        // ---- FIN DE LA CORRECCIÓN CLAVE ----
+
         return new Promise((resolve, reject) => {
-            // Si el input no existe o no tiene archivos, resuelve como null
-            if (!input || !input.files || input.files.length === 0) {
-                return resolve(null);
+            // 2. Ahora que sabemos que el elemento existe, comprobamos si tiene archivos.
+            if (inputElement.files && inputElement.files.length > 0) {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.onerror = (err) => {
+                    console.error(`Error al leer el archivo de ${id}:`, err);
+                    reject(new Error(`No se pudo leer el archivo de la imagen ${index + 1}.`));
+                };
+                reader.readAsDataURL(inputElement.files[0]);
+            } else {
+                // 3. Verificamos si la imagen es obligatoria (atributo 'required' en HTML)
+                if (inputElement.hasAttribute('required')) {
+                    // Si es requerida y no se ha subido, rechazamos la promesa para mostrar un error.
+                    reject(new Error(`La imagen ${index + 1} es obligatoria.`));
+                } else {
+                    // Si no es requerida y está vacía, la omitimos resolviendo a 'null'.
+                    resolve(null);
+                }
             }
-            
-            const reader = new FileReader();
-            reader.onload = (e) => resolve(e.target.result);
-            reader.onerror = (err) => {
-                 // Rechaza la promesa solo si hay un error de lectura
-                console.error("File reading error:", err);
-                reject(new Error('Error al leer el archivo de imagen.'));
-            };
-            reader.readAsDataURL(input.files[0]);
         });
     });
-    // Devuelve un objeto con las imágenes por nombre
-    return Promise.all(filePromises).then(([delantera, trasera]) => ({ delantera, trasera }));
+
+    // Promise.all espera a que todas las promesas se resuelvan
+    return Promise.all(filePromises).then(([delantera, trasera]) => {
+        // Devolvemos un objeto, como en la versión anterior.
+        return { delantera, trasera };
+    });
 }
 
 
@@ -124,7 +147,6 @@ async function generatePdfBlob(data, images) {
     const contentWidth = pageWidth - (margin * 2);
 
     try {
-        // Usar el mismo logo que en el HTML
         const logoBase64 = await imageToBase64('img/logo.png');
         doc.addImage(logoBase64, 'PNG', margin, 5, 40, 20); 
     } catch (logoError) {
@@ -136,20 +158,17 @@ async function generatePdfBlob(data, images) {
     doc.setDrawColor(0, 0, 0).setLineWidth(0.5).line(margin, 28, pageWidth - margin, 28);
 
     let y = 35;
-    const fieldHeight = 8, labelWidth = 45, dataWidth = 145 - labelWidth;
+    const fieldHeight = 8, labelWidth = 50, dataWidth = contentWidth - labelWidth;
     const col1X = margin;
     
-    // Función para dibujar campo (ahora ocupa todo el ancho)
     const drawField = (label, value, x, yPos) => {
         doc.setFontSize(9).setFont('Helvetica', 'bold').setFillColor(230, 230, 230);
-        doc.rect(x, yPos, labelWidth, fieldHeight, 'FD'); // Label background
+        doc.rect(x, yPos, labelWidth, fieldHeight, 'FD');
         doc.setTextColor(0, 0, 0).text(label, x + 2, yPos + 5);
-        
-        doc.rect(x + labelWidth, yPos, dataWidth, fieldHeight, 'S'); // Value border
+        doc.rect(x + labelWidth, yPos, dataWidth, fieldHeight, 'S');
         doc.setFont('Helvetica', 'normal').text(value || '', x + labelWidth + 2, yPos + 5);
     };
 
-    // --- Dibujar los campos del formulario ---
     drawField('FECHA', data.fecha, col1X, y); y += fieldHeight;
     drawField('EMPRESA', data.empresa, col1X, y); y += fieldHeight;
     drawField('PERSONA DE CONTACTO', data.contacto, col1X, y); y += fieldHeight;
@@ -157,7 +176,6 @@ async function generatePdfBlob(data, images) {
     drawField('TELÉFONO', data.telefono, col1X, y); y += fieldHeight;
     drawField('REFERENCIA PRODUCTO', data.referencia, col1X, y); y += fieldHeight + 5;
 
-    // --- Descripción del defecto ---
     doc.setFontSize(9).setFont('Helvetica', 'bold').text('DESCRIPCIÓN DEL DEFECTO', col1X, y); y += 4;
     const descHeight = 35;
     doc.rect(col1X, y, contentWidth, descHeight, 'S');
@@ -165,18 +183,15 @@ async function generatePdfBlob(data, images) {
     doc.setFont('Helvetica', 'normal').text(splitDescription, col1X + 2, y + 5);
     y += descHeight + 10;
 
-    // --- Área de fotografías ---
     doc.setFontSize(9).setFont('Helvetica', 'bold').text('FOTOGRAFÍAS ADJUNTAS', col1X, y); y += 4;
     const photoAreaStartY = y;
     const photoMargin = 5;
     const photoGridWidth = (contentWidth - photoMargin) / 2;
-    // Calcular altura proporcional para evitar deformaciones (asumiendo formato 4:3)
     const photoGridHeight = photoGridWidth * (3 / 4);
 
     if (images.delantera) {
         doc.addImage(images.delantera, 'JPEG', col1X, photoAreaStartY, photoGridWidth, photoGridHeight);
     }
-    // Añadir la segunda imagen solo si existe
     if (images.trasera) {
         doc.addImage(images.trasera, 'JPEG', col1X + photoGridWidth + photoMargin, photoAreaStartY, photoGridWidth, photoGridHeight);
     }
