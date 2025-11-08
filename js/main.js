@@ -74,7 +74,7 @@ form.addEventListener('submit', async (event) => {
     }
 });
 
-// Event listener para el botón "Ver y Guardar PDF" (el segundo clic)
+// Event listener para el botón "Ver y Guardar PDF"
 viewPdfButton.addEventListener('click', () => {
     if (generatedPdfBlobUrl) {
         window.open(generatedPdfBlobUrl, '_blank');
@@ -89,23 +89,31 @@ viewPdfButton.addEventListener('click', () => {
 
 function getImagesAsBase64() {
     const fileInputs = [
-        document.getElementById('fotoDelantera'), document.getElementById('fotoTrasera'),
-        document.getElementById('fotoDetalleDefecto'), document.getElementById('fotoEtiqueta')
+        document.getElementById('fotoDelantera'), 
+        document.getElementById('fotoTrasera')
     ];
+
     const filePromises = fileInputs.map(input => {
         return new Promise((resolve, reject) => {
-            if (input.files && input.files[0]) {
-                const reader = new FileReader();
-                reader.onload = (e) => resolve(e.target.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(input.files[0]);
-            } else {
-                reject(new Error(`La imagen "${input.labels[0].textContent}" es obligatoria.`));
+            // Si el input no existe o no tiene archivos, resuelve como null
+            if (!input || !input.files || input.files.length === 0) {
+                return resolve(null);
             }
+            
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = (err) => {
+                 // Rechaza la promesa solo si hay un error de lectura
+                console.error("File reading error:", err);
+                reject(new Error('Error al leer el archivo de imagen.'));
+            };
+            reader.readAsDataURL(input.files[0]);
         });
     });
-    return Promise.all(filePromises).then(([delantera, trasera, detalle, etiqueta]) => ({ delantera, trasera, detalle, etiqueta }));
+    // Devuelve un objeto con las imágenes por nombre
+    return Promise.all(filePromises).then(([delantera, trasera]) => ({ delantera, trasera }));
 }
+
 
 async function generatePdfBlob(data, images) {
     const { jsPDF } = window.jspdf;
@@ -116,53 +124,62 @@ async function generatePdfBlob(data, images) {
     const contentWidth = pageWidth - (margin * 2);
 
     try {
-        const upowerLogoBase64 = await imageToBase64('img/upower.png');
-        doc.addImage(upowerLogoBase64, 'PNG', margin, 5, 25, 10);
+        // Usar el mismo logo que en el HTML
+        const logoBase64 = await imageToBase64('img/logo.png');
+        doc.addImage(logoBase64, 'PNG', margin, 5, 40, 20); 
     } catch (logoError) {
-        console.warn('Logo de U-Power no encontrado:', logoError);
+        console.warn('Logo no encontrado:', logoError);
     }
 
-    doc.setFontSize(14).setFont('Helvetica', 'bold').setTextColor(255, 0, 0);
-    doc.text('RECLAMACION DE GARANTÍAS', pageWidth / 2, 10, { align: 'center' });
-    doc.setDrawColor(0, 0, 0).setLineWidth(0.5).line(margin, 15, pageWidth - margin, 15);
+    doc.setFontSize(16).setFont('Helvetica', 'bold');
+    doc.text('FORMULARIO DE RECLAMACIÓN', pageWidth / 2, 22, { align: 'center' });
+    doc.setDrawColor(0, 0, 0).setLineWidth(0.5).line(margin, 28, pageWidth - margin, 28);
 
-    let y = 20;
-    const fieldHeight = 8, labelWidth = 30, dataWidth = 60;
-    const col1X = margin, col2X = margin + labelWidth + dataWidth + 10;
-
+    let y = 35;
+    const fieldHeight = 8, labelWidth = 45, dataWidth = 145 - labelWidth;
+    const col1X = margin;
+    
+    // Función para dibujar campo (ahora ocupa todo el ancho)
     const drawField = (label, value, x, yPos) => {
         doc.setFontSize(9).setFont('Helvetica', 'bold').setFillColor(230, 230, 230);
-        doc.rect(x, yPos, labelWidth, fieldHeight, 'FD');
+        doc.rect(x, yPos, labelWidth, fieldHeight, 'FD'); // Label background
         doc.setTextColor(0, 0, 0).text(label, x + 2, yPos + 5);
-        doc.rect(x + labelWidth, yPos, dataWidth, fieldHeight, 'S');
+        
+        doc.rect(x + labelWidth, yPos, dataWidth, fieldHeight, 'S'); // Value border
         doc.setFont('Helvetica', 'normal').text(value || '', x + labelWidth + 2, yPos + 5);
     };
 
-    drawField('FECHA', data.fecha, col1X, y);
-    drawField('AGENTE', 'Representaciones Arroyo', col2X, y); y += fieldHeight;
-    drawField('CLIENTE', data.empresa, col1X, y);
-    drawField('CONTACTO', data.contacto, col2X, y); y += fieldHeight;
-    drawField('MODELO', data.modelo, col1X, y); y += fieldHeight;
-    drawField('REF', data.referencia, col1X, y); y += fieldHeight;
-    drawField('TALLA', data.talla, col1X, y); y += fieldHeight + 5;
+    // --- Dibujar los campos del formulario ---
+    drawField('FECHA', data.fecha, col1X, y); y += fieldHeight;
+    drawField('EMPRESA', data.empresa, col1X, y); y += fieldHeight;
+    drawField('PERSONA DE CONTACTO', data.contacto, col1X, y); y += fieldHeight;
+    drawField('Nº FACTURA O ALBARÁN', data.factura, col1X, y); y += fieldHeight;
+    drawField('TELÉFONO', data.telefono, col1X, y); y += fieldHeight;
+    drawField('REFERENCIA PRODUCTO', data.referencia, col1X, y); y += fieldHeight + 5;
 
-    doc.setFontSize(9).setFont('Helvetica', 'bold').text('DESCRIPCIÓN DEFECTO', col1X, y); y += 3;
-    const descHeight = 30;
+    // --- Descripción del defecto ---
+    doc.setFontSize(9).setFont('Helvetica', 'bold').text('DESCRIPCIÓN DEL DEFECTO', col1X, y); y += 4;
+    const descHeight = 35;
     doc.rect(col1X, y, contentWidth, descHeight, 'S');
     const splitDescription = doc.splitTextToSize(data.defecto, contentWidth - 4);
     doc.setFont('Helvetica', 'normal').text(splitDescription, col1X + 2, y + 5);
-    y += descHeight + 5;
+    y += descHeight + 10;
 
-    const photoAreaHeight = doc.internal.pageSize.getHeight() - y - margin;
-    doc.setFillColor(245, 245, 245).rect(margin, y, contentWidth, photoAreaHeight, 'F');
+    // --- Área de fotografías ---
+    doc.setFontSize(9).setFont('Helvetica', 'bold').text('FOTOGRAFÍAS ADJUNTAS', col1X, y); y += 4;
+    const photoAreaStartY = y;
     const photoMargin = 5;
     const photoGridWidth = (contentWidth - photoMargin) / 2;
-    const photoGridHeight = (photoAreaHeight - photoMargin) / 2;
+    // Calcular altura proporcional para evitar deformaciones (asumiendo formato 4:3)
+    const photoGridHeight = photoGridWidth * (3 / 4);
 
-    if (images.delantera) doc.addImage(images.delantera, 'JPEG', col1X, y, photoGridWidth, photoGridHeight);
-    if (images.trasera) doc.addImage(images.trasera, 'JPEG', col1X + photoGridWidth + photoMargin, y, photoGridWidth, photoGridHeight);
-    if (images.detalle) doc.addImage(images.detalle, 'JPEG', col1X, y + photoGridHeight + photoMargin, photoGridWidth, photoGridHeight);
-    if (images.etiqueta) doc.addImage(images.etiqueta, 'JPEG', col1X + photoGridWidth + photoMargin, y + photoGridHeight + photoMargin, photoGridWidth, photoGridHeight);
+    if (images.delantera) {
+        doc.addImage(images.delantera, 'JPEG', col1X, photoAreaStartY, photoGridWidth, photoGridHeight);
+    }
+    // Añadir la segunda imagen solo si existe
+    if (images.trasera) {
+        doc.addImage(images.trasera, 'JPEG', col1X + photoGridWidth + photoMargin, photoAreaStartY, photoGridWidth, photoGridHeight);
+    }
 
     return doc.output('blob');
 }
